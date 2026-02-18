@@ -7,8 +7,12 @@ CHANGELOG_SUFFIX=$2
 GITHUB_REPO_URL=$3
 CI_COMMIT_REF_NAME=$4
 
-CHANGELOG_FILE="CHANGELOG${CHANGELOG_SUFFIX:-}.md"
-CLIFF_TOML="cliff.toml"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Use absolute path so git-cliff finds both files regardless of CWD or branch context.
+# git-cliff resolves --prepend paths relative to --config location, not CWD.
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
+CHANGELOG_FILE="${REPO_ROOT}/CHANGELOG${CHANGELOG_SUFFIX:-}.md"
+CLIFF_TOML="${SCRIPT_DIR}/cliff.toml"
 CLIFF_TOML_URL="https://raw.githubusercontent.com/mendersoftware/mendertesting/master/utils/cliff.toml"
 
 echo "INFO - Generating changelog file ${CHANGELOG_FILE} for release ${RELEASE_VERSION}"
@@ -80,10 +84,10 @@ fi
 # Generate fresh changelog section for the current release
 echo "INFO - Running git-cliff to generate ${RELEASE_VERSION} section"
 if [ "${CHANGELOG_SUFFIX}" == "-saas" ]; then
-    git cliff --unreleased --prepend ${CHANGELOG_FILE} --github-repo ${GITHUB_REPO_URL} --use-branch-tags --tag ${RELEASE_VERSION}
+    git cliff --config "${CLIFF_TOML}" --unreleased --prepend "${CHANGELOG_FILE}" --github-repo "${GITHUB_REPO_URL}" --use-branch-tags --tag "${RELEASE_VERSION}"
 else
-    git cliff --unreleased --prepend ${CHANGELOG_FILE} --github-repo ${GITHUB_REPO_URL} --use-branch-tags --tag ${RELEASE_VERSION} --ignore-tags saas
+    git cliff --config "${CLIFF_TOML}" --unreleased --prepend "${CHANGELOG_FILE}" --github-repo "${GITHUB_REPO_URL}" --use-branch-tags --tag "${RELEASE_VERSION}" --ignore-tags saas
 fi
 
-git add ${CHANGELOG_FILE}
+git add "${CHANGELOG_FILE}"
 echo "INFO - Successfully generated ${CHANGELOG_FILE}"

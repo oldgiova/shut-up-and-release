@@ -1,170 +1,144 @@
-# Release Management Scripts
+# Release Management
 
-Modular scripts for managing mender-server releases using git-cliff for version calculation.
+Modular bash scripts replacing `release-please` for managing releases.
+Version calculation uses **git-cliff** on conventional commits. Git tags are the single source of truth.
 
-## Quick Start
-
-```bash
-# Calculate next version (no changes)
-./version.sh --dry-run
-
-# Preview changelog (no changes, local git only)
-./changelog.sh 4.2.0 --preview
-
-# Generate actual changelog (writes files, uses GitHub API)
-# REQUIRES: GITHUB_TOKEN environment variable
-export GITHUB_TOKEN="your_token_here"
-./changelog.sh 4.2.0
-
-# Generate changelog with local git only (no token needed, no PR links)
-./changelog.sh 4.2.0 --local-git
-
-# Create release PR
-./pr.sh 4.2.0
-
-# Promote RC to stable
-./promote.sh v4.1.0-rc.2
-
-# Create GitHub release
-./release.sh v4.1.0
-```
-
-## Git-cliff Modes
-
-The scripts use git-cliff for changelog generation with two different modes:
-
-### Local Git Mode (Default for Preview)
-- Reads commit history from local `.git` directory
-- **Fast** - no network calls
-- **No authentication required** - no GITHUB_TOKEN needed
-- **Limited metadata** - no PR links, contributor avatars, etc.
-- **No rate limits**
-
-**When to use:**
-- `./changelog.sh <version> --preview` - Quick preview of changes
-- `./changelog.sh <version> --local-git` - Testing without API access
-
-### GitHub API Mode (Default for Normal)
-- Reads commit history from local git + fetches metadata from GitHub API
-- **Slower** - makes network calls to GitHub
-- **Requires authentication** - GITHUB_TOKEN environment variable
-- **Rich metadata** - PR links, contributor info, etc.
-- **Subject to rate limits** - 60 req/hour without token, 5000 req/hour with token
-
-**When to use:**
-- `./changelog.sh <version>` - Generating actual changelog for release (default)
-
-**Required environment variable:**
-```bash
-export GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"
-```
-
-Get a token from: https://github.com/settings/tokens
-Permissions needed: `repo` (read access)
+---
 
 ## Workflows
 
-### Direct Stable Release (Open Source)
+### Prerelease → Stable (main flow)
 
 ```
-Configuration: prerelease=false
-
-make release-pr
-  ↓
-PR for v4.2.0
-  ↓
-Merge → Tag v4.2.0
-  ↓
-make release-github TAG=v4.2.0
+make release-pr              # creates CHANGELOG-saas.md + CHANGELOG.md (unreleased)
+  ↓ review & merge PR
+make release-publish         # tags v1.0.0-saas.1, creates GitHub release
+  ↓ (iterate if needed: more commits → make release-pr again → merge → publish)
+make release-promote         # creates a promote PR: finalizes CHANGELOG.md date
+  ↓ review & merge promote PR
+make release-publish         # tags v1.0.0, creates GitHub release
 ```
 
-### RC Testing → Promotion (Enterprise)
+### Stable (direct, no prerelease)
 
 ```
-Configuration: prerelease=true, prerelease-type=rc
-
-make release-pr → v4.1.0-rc.1
-  ↓
-Test & fix bugs
-  ↓
-make release-pr → v4.1.0-rc.2
-  ↓
-QA approval
-  ↓
-make release-promote RC_TAG=v4.1.0-rc.2 → v4.1.0
-  ↓
-make release-github TAG=v4.1.0
+# config: prerelease=false
+make release-pr              # creates CHANGELOG.md
+  ↓ review & merge PR
+make release-publish         # tags v1.0.0, creates GitHub release
 ```
 
-### Switch to Stable (Alternative)
-
-```
-make release-pr → v4.1.0-rc.2
-  ↓
-Edit config: prerelease=false
-  ↓
-make release-pr → v4.1.0
-```
-
-## Configuration
-
-### .release-please-manifest.json
-```json
-{
-  ".": "4.1.0"
-}
-```
-Single source of truth for current version per branch.
-
-### release-please-config.json
-```json
-{
-  "prerelease": true,
-  "prerelease-type": "rc"
-}
-```
-
-| Setting | Values | Effect |
-|---------|--------|--------|
-| `prerelease` | `true` | Creates RC/saas versions |
-| | `false` | Creates stable versions |
-| `prerelease-type` | `"rc"` | For maintenance branches |
-| | `"saas"` | For main branch (enterprise) |
-
-## Version Calculation
-
-Uses **git-cliff** to analyze conventional commits:
-- `fix:` → patch bump (X.Y.Z+1)
-- `feat:` → minor bump (X.Y+1.0)
-- `BREAKING CHANGE:` or `!:` → major bump (X+1.0.0)
-
-**Tag Filtering**:
-- Stable releases: Ignore all `.*-(rc|saas).*` tags
-- RC releases: Ignore `.*-saas.*` tags
-- Saas releases: Ignore `.*-rc.*` tags
+---
 
 ## Make Targets
 
-```makefile
-make release-status              # Show current version & config
-make release-version-show        # Preview next version
-make release-pr                  # Create release PR
-make release-pr PRERELEASE=true  # Force RC mode
-make release-pr PRERELEASE=false # Force stable mode
-make release-promote RC_TAG=...  # Promote RC to stable
-make release-github TAG=...      # Create GitHub release
-```
+| Target | Description |
+|--------|-------------|
+| `make release-pr` | Create or update release PR |
+| `make release-pr PRERELEASE=true` | Force prerelease mode (override config) |
+| `make release-pr PRERELEASE=false` | Force stable mode (override config) |
+| `make release-publish` | Tag + push + GitHub release (run after PR is merged) |
+| `make release-promote` | Create promote PR (latest prerelease → stable) |
+| `make release-promote RC_TAG=vX.Y.Z-saas.1` | Promote specific prerelease tag |
+| `make release-version-show` | Preview next version (dry-run, no changes) |
+| `make release-status` | Show current branch, tags, and config |
+| `make release-diagnose` | Debug environment and configuration issues |
 
-## Branch Configuration Examples
+---
 
-### Open Source Main (Direct Stable)
-```json
-{
-  "prerelease": false
-}
-```
+## Script Reference
 
-### Enterprise Main (Saas Prereleases)
+### `pr.sh` — Create or update a release PR
+
+Idempotent: running it again updates the existing PR branch and body.
+
+**What it does:**
+1. Calculates the next version via `version.sh` (git-cliff)
+2. Resets the PR branch to the current base tip (`git checkout -B`)
+3. Runs `changelog.sh` to generate `CHANGELOG-{suffix}.md`
+4. For prerelease versions: also updates `CHANGELOG.md` with a cumulative
+   `## X.Y.Z (unreleased)` section (commits since last stable tag, ignoring rc/saas)
+5. Commits and pushes the branch (force-push on updates — branch is tool-managed)
+6. Creates or updates the GitHub PR with label `autorelease: pending`
+
+**Guards:**
+- Working tree must be clean
+- If the changelog on the base branch already matches what would be generated
+  (i.e., PR was merged but not tagged), it fails with a clear message to run
+  `make release-publish` instead
+
+### `publish.sh` — Tag, push, and create GitHub release
+
+Run **after** the release PR is merged.
+
+**What it does:**
+1. Checks for any open `autorelease: pending` PR — if one exists, exits with a
+   warning (don't publish while a PR is still open)
+2. Finds the most recently **merged** PR with label `autorelease: pending` —
+   this is the authoritative source for the version to publish
+3. Extracts the version from the PR title (`chore(branch): release X.Y.Z`)
+4. Creates and pushes the git tag
+5. Optionally waits for CI (skipped with `--skip-ci-wait` or `--auto-yes`)
+6. Creates the GitHub release via `release.sh`
+
+**Guards:**
+- Refuses to run if a release PR is still open (`autorelease: pending`)
+- Refuses to run if no merged release PR is found (nothing to publish)
+- If the tag already exists, prompts to reuse it (auto-yes: reuses it)
+
+### `promote.sh` — Create a promote PR (prerelease → stable)
+
+Run after the prerelease tag exists and is validated. Creates a PR; does **not**
+directly create the stable tag — that is done by `make release-publish` after
+the promote PR is merged.
+
+**What it does:**
+1. Validates the prerelease tag exists
+2. Validates `CHANGELOG.md` has a `## X.Y.Z (unreleased)` section (created by `pr.sh`)
+3. Creates a promote PR branch reset to the base tip
+4. Replaces `## X.Y.Z (unreleased)` → `## X.Y.Z - YYYY-MM-DD`
+5. Commits and creates a GitHub PR with label `autorelease: pending`
+
+**After merging the promote PR:** run `make release-publish`. It finds the merged
+PR, extracts `X.Y.Z`, and creates the stable tag.
+
+**Guards:**
+- Stable tag must not already exist
+- `CHANGELOG.md` must have the `(unreleased)` section — if missing, run `make release-pr` first
+- Working tree must be clean
+
+### `version.sh` — Calculate next version
+
+Read-only. Outputs the next version string or nothing (if no releasable commits).
+
+- Uses git-cliff `--bumped-version` to analyse conventional commits
+- `fix:` → patch, `feat:` → minor, `BREAKING CHANGE:` / `!` → major
+- Respects `prerelease` and `prerelease-type` from `release-please-config.json`
+- On maintenance branches (`X.Y.x`): filters tags to the current `X.Y.*` series
+- If the calculated version already has a tag: exits 0 with no output (nothing to release)
+
+### `changelog.sh` — Generate changelog
+
+Wraps `generate_changelog.sh` (GitHub API) or git-cliff directly (`--local-git`).
+
+**Changelog strategy by version type:**
+
+| Version type | File updated |
+|---|---|
+| `X.Y.Z-saas.N` | `CHANGELOG-saas.md` only |
+| `X.Y.Z-rc.N` | `CHANGELOG-rc.md` only |
+| Stable on maintenance branch | `CHANGELOG-enterprise.md` only |
+| Stable on main branch | `CHANGELOG.md` only |
+
+The cumulative `CHANGELOG.md (unreleased)` section for prerelease cycles is
+managed separately by `pr.sh`, not by `changelog.sh`.
+
+---
+
+## Configuration
+
+### `release-please-config.json`
+
 ```json
 {
   "prerelease": true,
@@ -172,32 +146,100 @@ make release-github TAG=...      # Create GitHub release
 }
 ```
 
-### Maintenance Branch (RC → Stable)
-```json
-{
-  "prerelease": true,
-  "prerelease-type": "rc",
-  "packages": {
-    ".": {
-      "changelog-path": "CHANGELOG-enterprise.md"
-    }
-  }
-}
+| Field | Values | Effect |
+|-------|--------|--------|
+| `prerelease` | `true` | Creates prerelease versions (saas/rc suffix) |
+| | `false` | Creates stable versions |
+| `prerelease-type` | `"saas"` | Main branch (e.g., v1.0.0-saas.1) |
+| | `"rc"` | Maintenance branches (e.g., v4.1.0-rc.2) |
+
+---
+
+## Tag Format
+
+Valid tag formats (strict semver, safe for shell use):
+
+```
+vX.Y.Z                  stable     e.g. v1.0.0
+vX.Y.Z-saas             prerelease e.g. v1.0.0-saas
+vX.Y.Z-saas.N           prerelease e.g. v1.0.0-saas.1
+vX.Y.Z-rc               prerelease e.g. v4.1.0-rc
+vX.Y.Z-rc.N             prerelease e.g. v4.1.0-rc.2
 ```
 
-## Manual Override
+Pre-release identifiers consist of lowercase letters, digits, and dots only —
+no shell-special characters. This is enforced by `validate_tag()` in `common.sh`.
 
-Emergency use only:
+---
+
+## Manual Version Override
+
+Use `RELEASE_AS` to bypass git-cliff and force a specific version:
+
 ```bash
-RELEASE_AS=4.1.0-rc.5 make release-pr
+RELEASE_AS=1.0.0-saas make release-pr
+RELEASE_AS=1.0.0-saas.3 make release-pr
+RELEASE_AS=4.1.0 make release-pr PRERELEASE=false
 ```
 
-## Testing
+The `v` prefix is optional — both `1.0.0-saas` and `v1.0.0-saas` work.
 
+---
+
+## CI/CD (Non-interactive Mode)
+
+GitLab CI sets `CI=true` automatically. The Makefile detects this and passes
+`--auto-yes` to all scripts, suppressing interactive prompts:
+
+```makefile
+CI_FLAGS := $(if $(filter true,$(CI)),--auto-yes,)
+```
+
+`--auto-yes` implies `--skip-ci-wait` in `publish.sh`.
+
+To force non-interactive mode manually:
 ```bash
-# Run all tests
-./.gitlab/release/tests/run_all_tests.sh
-
-# Dry-run mode (safe)
-./version.sh --dry-run --preview
+make release-publish CI=true
+make release-promote CI=true
 ```
+
+---
+
+## Source of Truth
+
+| What | Where |
+|------|-------|
+| Current version | Latest git tag |
+| Version to publish | Merged PR with `autorelease: pending` label |
+| Next version | git-cliff analysis of commits since last tag |
+| Changelog content | git-cliff + (optionally) GitHub API via `generate_changelog.sh` |
+
+The `.release-please-manifest.json` file is a fallback for repos with no tags yet.
+It is **not** updated during normal release operations.
+
+---
+
+## Guards and Restrictions
+
+| Guard | Where | Behaviour |
+|-------|-------|-----------|
+| Open release PR exists | `publish.sh` | Warn + exit 0 (not an error) |
+| No merged release PR found | `publish.sh` | Info + exit 0 |
+| Stable tag already exists | `promote.sh` | Fatal |
+| `CHANGELOG.md` missing `(unreleased)` section | `promote.sh` | Fatal with instructions |
+| Working tree not clean | `pr.sh`, `promote.sh` | Fatal |
+| PR already merged, no tag yet | `pr.sh` | Fatal with instructions to run `release-publish` |
+| Invalid tag format | all scripts | Fatal via `validate_tag()` |
+
+---
+
+## PR Branch Naming
+
+| Branch | Used by |
+|--------|---------|
+| `release-please--branches--{base}` | `pr.sh` — prerelease/stable PR |
+| `release-please--branches--{base}--promote` | `promote.sh` — promote PR |
+
+Both branches are **fully tool-managed**: they are always reset to the base tip
+on each run (`git checkout -B`). Force-push is always used for updates.
+Do not commit directly to these branches.

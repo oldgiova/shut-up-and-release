@@ -143,9 +143,9 @@ get_latest_stable_tag() {
 }
 
 get_latest_prerelease_tag() {
-    # Get the most recent prerelease tag (rc or saas)
+    # Get the most recent prerelease tag (rc or saas), with or without .N suffix
     git tag --list "v*" --sort=-version:refname 2>/dev/null | \
-        grep -E '\-(rc|saas)\.' | head -n 1 || echo ""
+        grep -E '\-(rc|saas)' | head -n 1 || echo ""
 }
 
 read_current_version() {
@@ -222,11 +222,12 @@ is_prerelease_enabled() {
 # Validate tag format
 # SECURITY: Strict validation prevents command injection via tag names
 # All tags MUST pass this check before use in git/gh commands
-# Pattern enforces: vX.Y.Z or vX.Y.Z-type.N (where type is lowercase letters only)
+# Pattern enforces valid semver: vX.Y.Z or vX.Y.Z-pre.id (dot-separated lowercase alphanumeric identifiers)
+# Allowed chars in pre-release: lowercase letters, digits, dots — no shell-special characters
 validate_tag() {
     local tag=$1
-    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+\.[0-9]+)?$ ]]; then
-        fatal "Invalid tag format: $tag (expected: vX.Y.Z or vX.Y.Z-type.N)"
+    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+(\.[a-z0-9]+)*)?$ ]]; then
+        fatal "Invalid tag format: $tag (expected: vX.Y.Z or vX.Y.Z-prerelease)"
     fi
 }
 

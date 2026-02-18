@@ -80,7 +80,7 @@ main() {
         info "Auto-detecting latest prerelease tag..."
 
         prerelease_tag=$(git tag --list "v*" --sort=-version:refname 2>/dev/null | \
-                         grep -E '\-(rc|saas)\.' | head -n 1 || echo "")
+                         grep -E '\-(rc|saas)' | head -n 1 || echo "")
 
         if [[ -z "$prerelease_tag" ]]; then
             fatal "No prerelease tags found (expected vX.Y.Z-rc.N or vX.Y.Z-saas.N)"
@@ -104,9 +104,9 @@ main() {
         fi
     fi
 
-    # Validate tag format (rc or saas)
-    if [[ ! "$prerelease_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(rc|saas)\.[0-9]+$ ]]; then
-        fatal "Invalid prerelease tag format: $prerelease_tag (expected: vX.Y.Z-rc.N or vX.Y.Z-saas.N)"
+    # Validate tag format (rc or saas, with optional .N suffix per semver)
+    if [[ ! "$prerelease_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(rc|saas)(\.[0-9]+)?$ ]]; then
+        fatal "Invalid prerelease tag format: $prerelease_tag (expected: vX.Y.Z-rc or vX.Y.Z-saas, optionally with .N suffix)"
     fi
 
     # Validate prerelease tag exists

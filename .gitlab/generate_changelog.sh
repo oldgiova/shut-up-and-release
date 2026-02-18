@@ -29,6 +29,11 @@ fi
 # 3. Run git-cliff to regenerate the unreleased section fresh
 # This ensures we always have a clean, up-to-date section for the current release
 
+if [ ! -f "${CHANGELOG_FILE}" ]; then
+    echo "INFO - ${CHANGELOG_FILE} does not exist, creating fresh"
+    echo "---" > "${CHANGELOG_FILE}"
+fi
+
 if [ -f "${CHANGELOG_FILE}" ]; then
     echo "INFO - Removing unreleased section from ${CHANGELOG_FILE} for fresh regeneration"
 

@@ -78,7 +78,7 @@ main() {
         --state open \
         --label "autorelease: pending" \
         --json number,title \
-        --jq '.[0] | "#\(.number): \(.title)"' 2>/dev/null || echo "")
+        --jq '.[0] | select(. != null) | "#\(.number): \(.title)"' 2>/dev/null || echo "")
 
     if [[ -n "$open_pr" ]]; then
         warn "Release PR is still open: ${open_pr}"

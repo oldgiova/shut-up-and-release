@@ -1,4 +1,24 @@
 ---
+## 0.0.6-saas.3 - 2026-02-18
+
+
+### Features
+
+
+- New feature x
+ ([66e3487](https://github.com/oldgiova/shut-up-and-release/commit/66e3487fe34d4117f3e57d504ce772d2a8adc063)) 
+
+
+- New feature y
+ ([b74bfda](https://github.com/oldgiova/shut-up-and-release/commit/b74bfda4e67953b95df0d3280a815a3812063080)) 
+
+
+
+
+
+
+
+
 ## 0.0.6-saas.2 - 2026-02-18
 
 

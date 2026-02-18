@@ -22,20 +22,14 @@ Options:
   --base BRANCH       Base branch (default: current branch)
   --no-push           Don't push branch (for testing)
 
-Environment Variables:
-  FORCE_PUSH          Set to 'true' to force push when remote branch has diverged
-                      (default: false - will fail with helpful error instead)
-
 Single Source of Truth:
   Version is calculated by version.sh using git-cliff based on conventional commits.
   Manual version override is possible but not recommended.
 
 This script is idempotent: if the PR branch already exists, it will update it.
-
-Push Safety:
-  By default, this script will NOT force push. If the remote branch has diverged
-  (e.g., someone else modified it), the push will fail with a clear error.
-  Set FORCE_PUSH=true to override this safety check.
+The PR branch is always reset to the base branch tip before regenerating the
+changelog, so new commits on the base branch are always included. Updates use
+--force-with-lease to push safely.
 
 Examples:
   # Auto-calculate version and create PR (recommended)
@@ -136,19 +130,16 @@ main() {
     if remote_branch_exists "$pr_branch"; then
         warn "PR branch already exists remotely, will update it"
         branch_exists=true
+        # Fetch remote state now so --force-with-lease is effective later
+        git fetch origin "$pr_branch" 2>/dev/null || true
     fi
 
-    # Create/checkout PR branch
-    if git rev-parse --verify "$pr_branch" &>/dev/null; then
-        info "Checking out existing local branch: $pr_branch"
-        git checkout "$pr_branch"
-        if [[ "$branch_exists" == "true" ]]; then
-            git pull origin "$pr_branch" || warn "Could not pull from origin"
-        fi
-    else
-        info "Creating new branch: $pr_branch"
-        git checkout -b "$pr_branch" "$base_branch"
-    fi
+    # Always reset PR branch to the current tip of base branch.
+    # The PR branch is fully managed by this script — its only extra commit is
+    # the changelog update. Resetting ensures new commits on the base branch are
+    # picked up when the changelog is regenerated on each run.
+    info "Resetting PR branch to base: $pr_branch → $base_branch"
+    git checkout -B "$pr_branch" "$base_branch"
 
     _on_pr_branch=true
 
@@ -186,16 +177,11 @@ main() {
 
     # Check if there are changes to commit
     if git diff --cached --quiet; then
-        # Nothing to commit. Check whether the PR branch is also ahead of the base
-        # branch. If not, the release PR was already merged but never tagged.
-        local commits_ahead
-        commits_ahead=$(git rev-list --count "${base_branch}..${pr_branch}" 2>/dev/null || echo "0")
-        if [[ "$commits_ahead" -eq 0 ]]; then
-            fatal "Release v${version} is already merged into ${base_branch} but has no tag yet.
+        # No changelog changes after reset means the CHANGELOG on base already
+        # matches what we'd generate — the release PR was merged but not tagged yet.
+        fatal "Release v${version} is already merged into ${base_branch} but has no tag yet.
   Run 'make release-publish' to create the tag and GitHub release, then
   run 'make release-pr' again for the next version."
-        fi
-        info "No new changelog changes (PR branch already has the commit)"
     else
         # Commit changes
         local commit_msg=$(generate_pr_title "$version" "$base_branch")
@@ -210,45 +196,17 @@ main() {
     if [[ "$push" == "true" ]]; then
         info "Pushing branch to origin..."
 
-        # Safe push logic: try normal push first, only force if explicitly allowed
-        push_output=$(mktemp -t "push-output-XXXXXX")
-
-        if retry_git push origin "$pr_branch" 2>&1 | tee "$push_output"; then
-            info "Branch pushed successfully"
-            rm -f "$push_output"
+        # The PR branch is always regenerated from base, so updating it requires
+        # a force push. --force-with-lease is safe: it refuses if someone pushed
+        # to the remote after our fetch above (done at the start when branch_exists=true).
+        if [[ "$branch_exists" == "true" ]]; then
+            retry_git push --force-with-lease origin "$pr_branch" || \
+                fatal "Force push failed. Run 'git fetch origin $pr_branch' and retry."
         else
-            # Check if rejection was due to divergence
-            if grep -q "rejected.*non-fast-forward\|rejected.*fetch first\|rejected.*would clobber" "$push_output"; then
-                warn "Branch has diverged from remote"
-                warn "Remote branch was modified by someone else"
-
-                # Fetch remote to get latest state
-                git fetch origin "$pr_branch" 2>/dev/null || true
-
-                # Show what will be overwritten
-                info "Remote commits that will be lost:"
-                git log --oneline "$pr_branch..origin/$pr_branch" 2>/dev/null || \
-                    warn "Could not show remote commits (branch might not exist remotely yet)"
-
-                # Require explicit confirmation
-                if [[ "${FORCE_PUSH:-false}" == "true" ]]; then
-                    warn "FORCE_PUSH=true, forcing push..."
-                    retry_git push -f origin "$pr_branch" || fatal "Force push failed"
-                    info "Force push completed"
-                else
-                    fatal "Push rejected. Remote branch has changes.\n" \
-                          "  Set FORCE_PUSH=true to override, or pull changes first with:\n" \
-                          "    git checkout $pr_branch && git pull origin $pr_branch"
-                fi
-            else
-                # Some other error
-                error "Push failed for unknown reason. Output:"
-                cat "$push_output" >&2
-                rm -f "$push_output"
-                fatal "Push failed"
-            fi
-            rm -f "$push_output"
+            retry_git push origin "$pr_branch" || fatal "Push failed"
         fi
+
+        info "Branch pushed successfully"
 
         # Create or update PR
         if [[ "$branch_exists" == "true" ]]; then

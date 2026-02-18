@@ -73,6 +73,44 @@ extract_changelog_for_version() {
     return 0
 }
 
+# Post a comment on the release PR notifying that the release is published
+notify_release_pr() {
+    local tag=$1
+    local version="${tag#v}"
+    local release_url="https://github.com/${GITHUB_REPO_URL}/releases/tag/${tag}"
+
+    # Find the merged release PR for this version (still has "autorelease: pending"
+    # label until publish.sh rotates it to "autorelease: tagged")
+    local pr_number
+    pr_number=$(gh pr list \
+        --state merged \
+        --label "autorelease: pending" \
+        --search "release ${version}" \
+        --json number \
+        --jq '.[0].number' 2>/dev/null || true)
+
+    if [[ -z "$pr_number" ]]; then
+        warn "Could not find release PR for ${version}, skipping PR comment"
+        return 0
+    fi
+
+    gh pr edit "$pr_number" \
+        --remove-label "autorelease: pending" \
+        --add-label "autorelease: tagged" 2>/dev/null \
+        || warn "Could not rotate label on PR #${pr_number}"
+
+    info "Commenting on release PR #${pr_number}..."
+    local body
+    body="🎉 **Release [${tag}](${release_url}) is out!**
+
+The GitHub release has been published: ${release_url}"
+
+    gh pr comment "$pr_number" --body "$body" 2>/dev/null \
+        || warn "Could not post comment on PR #${pr_number}"
+
+    info "✓ PR #${pr_number}: labeled autorelease: tagged + commented"
+}
+
 # Determine which changelog file to use based on version
 # Refactored to use common.sh function (Task #16)
 # Saves 16 lines of duplication
@@ -257,8 +295,11 @@ main() {
         rm -f "$temp_notes"
     fi
 
+    # Notify the release PR
+    notify_release_pr "$tag"
+
     # Get release URL
-    local release_url=$(retry_gh release view "$tag" --json url -q .url 2>/dev/null || echo "")
+    local release_url=$(gh release view "$tag" --json url -q .url 2>/dev/null || echo "")
 
     info ""
     info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

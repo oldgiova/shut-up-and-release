@@ -84,7 +84,7 @@ main() {
             fatal "Tag does not exist: $tag (remove --skip-tag to create it)"
         fi
     else
-        info "→ Step 1/4: Creating and pushing tag..."
+        info "→ Step 1/3: Creating and pushing tag..."
 
         # Check if tag exists
         if tag_exists "$tag"; then
@@ -121,7 +121,7 @@ main() {
 
     # Step 2: Wait for CI
     if [[ "$skip_ci_wait" == "false" ]]; then
-        info "→ Step 2/4: CI Pipeline"
+        info "→ Step 2/3: CI Pipeline"
         wait_for_ci "$tag"
     else
         info "⊘ Skipping CI wait (--skip-ci-wait)"
@@ -129,7 +129,7 @@ main() {
     fi
 
     # Step 3: Create GitHub release
-    info "→ Step 3/4: Creating GitHub release..."
+    info "→ Step 3/3: Creating GitHub release..."
 
     # Check if release already exists
     if gh release view "$tag" &>/dev/null; then
@@ -145,44 +145,6 @@ main() {
     fi
 
     "${SCRIPT_DIR}/release.sh" "$tag" || fatal "Failed to create GitHub release"
-
-    echo ""
-    info "→ Step 4/4: Updating release PR..."
-
-    # Find the release PR for this version
-    local pr_number=$(gh pr list \
-        --state merged \
-        --label "autorelease: pending" \
-        --search "release ${version}" \
-        --json number,title \
-        --jq '.[0].number' 2>/dev/null || echo "")
-
-    if [[ -n "$pr_number" ]]; then
-        info "Found release PR #$pr_number"
-
-        # Update label
-        gh pr edit "$pr_number" \
-            --remove-label "autorelease: pending" \
-            --add-label "autorelease: tagged" 2>/dev/null || warn "Could not update PR label"
-
-        # Add comment with links
-        local release_url="https://github.com/${GITHUB_REPO_URL}/releases/tag/$tag"
-        local tag_url="https://github.com/${GITHUB_REPO_URL}/releases/tag/$tag"
-
-        local comment="🎉 **Release Published**
-
-- **Tag**: [\`$tag\`]($tag_url)
-- **Release**: [GitHub Release]($release_url)
-
-This release has been tagged and published."
-
-        gh pr comment "$pr_number" --body "$comment" 2>/dev/null || warn "Could not add PR comment"
-
-        info "✓ Updated PR #$pr_number"
-    else
-        warn "Could not find release PR for version $version"
-        info "Skipping PR update"
-    fi
 
     echo ""
     info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

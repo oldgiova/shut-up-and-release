@@ -1,0 +1,23 @@
+  Step 1: Navigate to test repo
+
+  cd /tmp/release-test-repo
+  git checkout 5.0.x
+
+  Step 2: View the key validation
+
+  # See commits that will be in changelog
+  git log --oneline v4.9.13..HEAD
+
+  # Generate the changelog
+  .gitlab/release/changelog.sh 5.0.0 --suffix "-enterprise"
+
+  # View result
+  cat CHANGELOG-enterprise.md | head -30
+
+  Step 3: Verify critical requirement
+
+  # Should show features (✅ PASS)
+  grep "feat:" CHANGELOG-enterprise.md
+
+  # Should show nothing (✅ PASS - no RC refs)
+

@@ -1,0 +1,203 @@
+#!/bin/bash
+# Publish a release: create tag, push it, and create GitHub release
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+usage() {
+    cat <<EOF
+Usage: $0 [options]
+
+Complete release workflow after PR is merged:
+  1. Create git tag from manifest version
+  2. Push tag to origin
+  3. Wait for CI pipeline (optional)
+  4. Create GitHub release
+
+Options:
+  --skip-tag      Skip tag creation (if already exists)
+  --skip-ci-wait  Don't wait for CI pipeline
+  --force-tag     Force recreate tag if exists
+  -h, --help      Show this help
+
+Examples:
+  # Complete release (recommended)
+  $0
+
+  # Release but don't wait for CI
+  $0 --skip-ci-wait
+
+  # Tag already exists, just create GitHub release
+  $0 --skip-tag
+EOF
+}
+
+wait_for_ci() {
+    local tag=$1
+
+    info "Waiting for CI pipeline to complete..."
+    info "Check pipeline at: https://github.com/${GITHUB_REPO_URL}/actions"
+    echo ""
+
+    # Simple wait with user confirmation
+    read -p "Press ENTER when CI pipeline is GREEN (or Ctrl+C to abort)..."
+    echo ""
+}
+
+main() {
+    init_release_scripts
+    require_command gh
+
+    local skip_tag=false
+    local force_tag=""
+    local skip_ci_wait=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --skip-tag) skip_tag=true; shift ;;
+            --force-tag) force_tag="--force"; shift ;;
+            --skip-ci-wait) skip_ci_wait=true; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *) error "Unknown option: $1"; usage; exit 1 ;;
+        esac
+    done
+
+    # Calculate version using version.sh (git-cliff + git tags)
+    info "Calculating version from git history..."
+    local version=$("${SCRIPT_DIR}/version.sh" --dry-run 2>/dev/null | tail -1)
+
+    if [[ -z "$version" ]] || [[ "$version" == "0.0.0" ]]; then
+        fatal "Could not calculate version. Have you merged the release PR?"
+    fi
+
+    local tag="v${version}"
+
+    info "Publishing release: $version"
+    echo ""
+
+    # Step 1: Create and push tag
+    if [[ "$skip_tag" == "true" ]]; then
+        info "⊘ Skipping tag creation (--skip-tag)"
+
+        # Verify tag exists
+        if ! tag_exists "$tag"; then
+            fatal "Tag does not exist: $tag (remove --skip-tag to create it)"
+        fi
+    else
+        info "→ Step 1/4: Creating and pushing tag..."
+
+        # Check if tag exists
+        if tag_exists "$tag"; then
+            if [[ -z "$force_tag" ]]; then
+                warn "Tag already exists: $tag"
+                read -p "Recreate tag? (y/N): " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    info "Using existing tag"
+                else
+                    force_tag="--force"
+                fi
+            fi
+        fi
+
+        # Create tag
+        if [[ -n "$force_tag" ]]; then
+            info "Force creating tag: $tag"
+            git tag -f -a "$tag" -m "Release ${version}"
+        else
+            if ! tag_exists "$tag"; then
+                info "Creating tag: $tag"
+                git tag -a "$tag" -m "Release ${version}"
+            fi
+        fi
+
+        # Push tag
+        info "Pushing tag to origin..."
+        git push $force_tag origin "$tag" || fatal "Failed to push tag"
+
+        info "✓ Tag created and pushed: $tag"
+        echo ""
+    fi
+
+    # Step 2: Wait for CI
+    if [[ "$skip_ci_wait" == "false" ]]; then
+        info "→ Step 2/4: CI Pipeline"
+        wait_for_ci "$tag"
+    else
+        info "⊘ Skipping CI wait (--skip-ci-wait)"
+        echo ""
+    fi
+
+    # Step 3: Create GitHub release
+    info "→ Step 3/4: Creating GitHub release..."
+
+    # Check if release already exists
+    if gh release view "$tag" &>/dev/null; then
+        warn "GitHub release already exists for $tag"
+        read -p "Update it? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            info "Skipping GitHub release"
+            echo ""
+            info "✓ Release published: $tag"
+            return 0
+        fi
+    fi
+
+    "${SCRIPT_DIR}/release.sh" "$tag" || fatal "Failed to create GitHub release"
+
+    echo ""
+    info "→ Step 4/4: Updating release PR..."
+
+    # Find the release PR for this version
+    local pr_number=$(gh pr list \
+        --state merged \
+        --label "autorelease: pending" \
+        --search "release ${version}" \
+        --json number,title \
+        --jq '.[0].number' 2>/dev/null || echo "")
+
+    if [[ -n "$pr_number" ]]; then
+        info "Found release PR #$pr_number"
+
+        # Update label
+        gh pr edit "$pr_number" \
+            --remove-label "autorelease: pending" \
+            --add-label "autorelease: tagged" 2>/dev/null || warn "Could not update PR label"
+
+        # Add comment with links
+        local release_url="https://github.com/${GITHUB_REPO_URL}/releases/tag/$tag"
+        local tag_url="https://github.com/${GITHUB_REPO_URL}/releases/tag/$tag"
+
+        local comment="🎉 **Release Published**
+
+- **Tag**: [\`$tag\`]($tag_url)
+- **Release**: [GitHub Release]($release_url)
+
+This release has been tagged and published."
+
+        gh pr comment "$pr_number" --body "$comment" 2>/dev/null || warn "Could not add PR comment"
+
+        info "✓ Updated PR #$pr_number"
+    else
+        warn "Could not find release PR for version $version"
+        info "Skipping PR update"
+    fi
+
+    echo ""
+    info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    info "✓ Release published successfully!"
+    info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    info ""
+    info "  Tag:     $tag"
+    info "  Release: https://github.com/${GITHUB_REPO_URL}/releases/tag/$tag"
+    if [[ -n "$pr_number" ]]; then
+        info "  PR:      #$pr_number (labeled: autorelease: tagged)"
+    fi
+    info ""
+}
+
+# Only run main if script is executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

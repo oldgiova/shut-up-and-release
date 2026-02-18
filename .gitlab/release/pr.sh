@@ -74,6 +74,9 @@ main() {
     local base_branch=$(current_branch)
     local original_branch="$base_branch"  # Remember where we started
     local push=true
+    local _on_pr_branch=false
+    local temp_body=""
+    local push_output=""
 
     local prerelease_flag=""
 
@@ -141,9 +144,19 @@ main() {
         git checkout -b "$pr_branch" "$base_branch"
     fi
 
+    _on_pr_branch=true
+
+    # Combined cleanup trap: handles temp files AND branch restoration on any exit.
+    # Single quotes ensure variables expand at trap execution time, not registration time.
+    # _on_pr_branch=false is set before the explicit return at the end, so the trap
+    # only performs the branch restore when the script exits mid-run (error/signal).
+    trap 'rm -f "$temp_body" "$push_output" 2>/dev/null; \
+          if [[ "$_on_pr_branch" == "true" ]]; then \
+              git checkout "$original_branch" 2>/dev/null || true; \
+          fi' EXIT INT TERM
+
     # Generate changelog (no manifest to update - version comes from git tags!)
-    local temp_body=$(mktemp -t "release-pr-XXXXXX")
-    trap 'rm -f "$temp_body"' EXIT INT TERM
+    temp_body=$(mktemp -t "release-pr-XXXXXX")
     info "Generating changelog for version: $version..."
 
     "${SCRIPT_DIR}/changelog.sh" "$version" --pr-body "$temp_body"
@@ -183,8 +196,7 @@ main() {
         info "Pushing branch to origin..."
 
         # Safe push logic: try normal push first, only force if explicitly allowed
-        local push_output=$(mktemp -t "push-output-XXXXXX")
-        trap 'rm -f "$push_output"' EXIT INT TERM
+        push_output=$(mktemp -t "push-output-XXXXXX")
 
         if retry_git push origin "$pr_branch" 2>&1 | tee "$push_output"; then
             info "Branch pushed successfully"
@@ -273,7 +285,9 @@ main() {
         rm -f "$temp_body"
     fi
 
-    # Return to original branch (handle worktrees)
+    # Return to original branch (handle worktrees).
+    # Disable the trap's branch restoration first to prevent a double-checkout.
+    _on_pr_branch=false
     if [[ "$original_branch" != "$pr_branch" ]]; then
         if git checkout "$original_branch" 2>/dev/null; then
             info "Returned to original branch: $original_branch"

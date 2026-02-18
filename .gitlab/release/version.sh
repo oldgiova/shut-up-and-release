@@ -183,30 +183,20 @@ main() {
             info "Detected maintenance branch: $current_branch (filtering tags to v${maintenance_pattern}.*)"
         fi
 
-        # Find reference point (last tag)
+        # Find reference point (last tag).
+        # read_current_version() returns the latest git tag, so git-cliff should
+        # analyse only commits AFTER that tag — use it directly as the range start.
         local last_tag=""
-        local base_ver=$(base_version "$current")
 
-        # Try to find last tag (consider both stable and prerelease tags)
-        if [[ -n "$maintenance_pattern" ]]; then
-            # On maintenance branch: only consider tags matching X.Y.* (both stable and prerelease)
-            # Use --merged HEAD to only consider reachable tags
-            last_tag=$(git tag --list "v${maintenance_pattern}.*" --sort=-version:refname --merged HEAD 2>/dev/null | \
-                       grep -v "^v${current}$" | head -n 1 || echo "")
+        if tag_exists "v${current}"; then
+            # Normal case: current version IS the latest tag.
+            last_tag="v${current}"
+        elif [[ -n "$maintenance_pattern" ]]; then
+            # Maintenance branch with no tag yet in this series: find latest reachable.
+            last_tag=$(git tag --list "v${maintenance_pattern}.*" --sort=-version:refname --merged HEAD 2>/dev/null | head -n 1 || echo "")
         else
-            # Global: consider all tags
-            if is_prerelease "$current"; then
-                # For prerelease in manifest, look for previous prereleases or stable
-                last_tag=$(git tag --list "v${base_ver}*" --sort=-version:refname --merged HEAD 2>/dev/null | \
-                           grep -v "^v${current}$" | head -n 1 || \
-                           git tag --list "v*" --sort=-version:refname --merged HEAD 2>/dev/null | \
-                           grep -v "^v${current}$" | head -n 1 || echo "")
-            else
-                # For stable in manifest, look for ANY previous tags (stable or prerelease)
-                # This handles the case where we're about to create first RC after stable
-                last_tag=$(git tag --list "v*" --sort=-version:refname --merged HEAD 2>/dev/null | \
-                           grep -v "^v${current}$" | head -n 1 || echo "")
-            fi
+            # Fresh repo (manifest fallback path, no tags at all): find any reachable tag.
+            last_tag=$(git tag --list "v*" --sort=-version:refname --merged HEAD 2>/dev/null | head -n 1 || echo "")
         fi
 
         # Fallback for maintenance branches: try previous minor version
@@ -323,9 +313,11 @@ main() {
 
     info "New version: $new_version"
 
-    # Validate calculated version doesn't already exist as tag
+    # If the calculated version already exists as a tag, there is nothing new to release.
+    # This is not an error — it means no releasable commits since the last release.
     if tag_exists "v${new_version}"; then
-        fatal "Calculated version already exists as tag: v${new_version}"
+        info "No releasable commits since v${current} — nothing to release"
+        exit 0
     fi
 
     # Output version for use in other scripts.

@@ -107,8 +107,14 @@ main() {
         version=$("${SCRIPT_DIR}/version.sh" ${prerelease_flag:+"$prerelease_flag"} 2>/dev/null)
         local version_exit=$?
 
-        if [[ $version_exit -ne 0 ]] || [[ -z "$version" ]]; then
+        if [[ $version_exit -ne 0 ]]; then
             fatal "Failed to calculate version from version.sh"
+        fi
+
+        if [[ -z "$version" ]]; then
+            # version.sh exits 0 with no output when there's nothing new to release.
+            info "No releasable commits since the last release — nothing to do"
+            exit 0
         fi
 
         info "Calculated version: $version"

@@ -8,11 +8,17 @@ usage() {
     cat <<EOF
 Usage: $0 [options]
 
-Complete release workflow after PR is merged:
-  1. Create git tag from manifest version
-  2. Push tag to origin
-  3. Wait for CI pipeline (optional)
-  4. Create GitHub release
+Complete release workflow. MUST be run after the release PR is merged:
+  1. Verify no release PR is still open
+  2. Calculate version from git history (git-cliff)
+  3. Create git tag and push it
+  4. Wait for CI pipeline (optional)
+  5. Create GitHub release
+
+Workflow:
+  make release-pr       → open (or update) the release PR
+  <merge the PR>        ← you must do this before running release-publish
+  make release-publish  → tag + push + GitHub release
 
 Options:
   --skip-tag      Skip tag creation (if already exists)
@@ -62,12 +68,36 @@ main() {
         esac
     done
 
+    # Guard: refuse to publish while a release PR is still open.
+    # version.sh calculates the same version whether the PR is merged or not
+    # (the commits are already on the base branch either way), so without this
+    # check publish.sh would happily tag with a stale CHANGELOG.
+    info "Checking for open release PRs..."
+    local open_pr
+    open_pr=$(gh pr list \
+        --state open \
+        --label "autorelease: pending" \
+        --json number,title \
+        --jq '.[0] | "#\(.number): \(.title)"' 2>/dev/null || echo "")
+
+    if [[ -n "$open_pr" ]]; then
+        fatal "Release PR is still open: ${open_pr}
+  Merge it first, then run 'make release-publish'."
+    fi
+
     # Calculate version using version.sh (git-cliff + git tags)
     info "Calculating version from git history..."
-    local version=$("${SCRIPT_DIR}/version.sh" --dry-run 2>/dev/null | tail -1)
+    local version
+    version=$("${SCRIPT_DIR}/version.sh" 2>/dev/null)
+    local version_exit=$?
 
-    if [[ -z "$version" ]] || [[ "$version" == "0.0.0" ]]; then
-        fatal "Could not calculate version. Have you merged the release PR?"
+    if [[ $version_exit -ne 0 ]]; then
+        fatal "Could not calculate version from version.sh"
+    fi
+
+    if [[ -z "$version" ]]; then
+        info "No releasable commits — nothing to publish"
+        exit 0
     fi
 
     local tag="v${version}"

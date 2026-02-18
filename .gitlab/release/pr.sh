@@ -180,7 +180,16 @@ main() {
 
     # Check if there are changes to commit
     if git diff --cached --quiet; then
-        info "No changes to commit (already up to date)"
+        # Nothing to commit. Check whether the PR branch is also ahead of the base
+        # branch. If not, the release PR was already merged but never tagged.
+        local commits_ahead
+        commits_ahead=$(git rev-list --count "${base_branch}..${pr_branch}" 2>/dev/null || echo "0")
+        if [[ "$commits_ahead" -eq 0 ]]; then
+            fatal "Release v${version} is already merged into ${base_branch} but has no tag yet.
+  Run 'make release-publish' to create the tag and GitHub release, then
+  run 'make release-pr' again for the next version."
+        fi
+        info "No new changelog changes (PR branch already has the commit)"
     else
         # Commit changes
         local commit_msg=$(generate_pr_title "$version" "$base_branch")

@@ -81,8 +81,9 @@ main() {
         --jq '.[0] | "#\(.number): \(.title)"' 2>/dev/null || echo "")
 
     if [[ -n "$open_pr" ]]; then
-        fatal "Release PR is still open: ${open_pr}
-  Merge it first, then run 'make release-publish'."
+        warn "Release PR is still open: ${open_pr}"
+        warn "Merge it first, then run 'make release-publish'."
+        exit 0
     fi
 
     # Calculate version using version.sh (git-cliff + git tags)

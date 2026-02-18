@@ -128,9 +128,9 @@ main() {
         fatal "Tag does not exist: $tag"
     fi
 
-    # Check GITHUB_TOKEN
-    if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-        fatal "GITHUB_TOKEN environment variable is required for creating GitHub releases"
+    # Check GitHub authentication: accept either GITHUB_TOKEN env var or gh auth login
+    if [[ -z "${GITHUB_TOKEN:-}" ]] && ! gh auth status &>/dev/null; then
+        fatal "GitHub authentication required: set GITHUB_TOKEN or run 'gh auth login'"
     fi
 
     # Extract version
@@ -193,9 +193,12 @@ main() {
         title="$tag"
     fi
 
-    # Check if release already exists
+    # Check if release already exists.
+    # Use plain gh here (not retry_gh): a 404 "not found" is the expected case
+    # for new releases, not a transient error. retry_gh would silently fatal
+    # after 3 attempts with all output suppressed by &>/dev/null.
     local release_exists=false
-    if retry_gh release view "$tag" &>/dev/null; then
+    if gh release view "$tag" &>/dev/null; then
         release_exists=true
         warn "Release already exists, updating..."
     fi

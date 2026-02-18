@@ -183,7 +183,10 @@ main() {
     # Step 3: Create and push tag
     info "→ Step 3/4: Creating stable tag..."
 
-    git tag -a "$stable_tag" -m "Release ${stable_version} (promoted from ${prerelease_tag})" || \
+    # Tag the commit that the prerelease tag points to, not HEAD.
+    # Without the explicit ref, `git tag -a` tags HEAD, which may have diverged.
+    # `^{}` dereferences an annotated tag to its underlying commit object.
+    git tag -a "$stable_tag" "${prerelease_tag}^{}" -m "Release ${stable_version} (promoted from ${prerelease_tag})" || \
         fatal "Failed to create tag"
 
     info "✓ Tag created: $stable_tag"
@@ -208,7 +211,41 @@ main() {
     # Step 4: Create GitHub release
     info "→ Step 4/4: Creating GitHub release..."
 
-    "${SCRIPT_DIR}/release.sh" "$stable_tag" || fatal "Failed to create GitHub release"
+    # Pull release notes from the prerelease changelog, not CHANGELOG.md.
+    # release.sh would default to CHANGELOG.md for a stable version, which won't
+    # have a section for this version. The prerelease changelog has the right content.
+    local prerelease_version="${prerelease_tag#v}"
+    local prerelease_suffix
+    prerelease_suffix=$(detect_changelog_suffix "$prerelease_version")
+    local source_changelog="CHANGELOG${prerelease_suffix}.md"
+    local temp_notes=""
+    local notes_args=()
+
+    if [[ -f "$source_changelog" ]]; then
+        temp_notes=$(mktemp -t "promote-notes-XXXXXX")
+        trap 'rm -f "$temp_notes"' EXIT INT TERM
+
+        local escaped_version
+        escaped_version=$(echo "$prerelease_version" | sed 's/\./\\./g')
+
+        awk "/^## (\[)?v?${escaped_version}(\])?( -|$)/ {found=1; next} found && /^## / {exit} found {print}" \
+            "$source_changelog" > "$temp_notes" 2>/dev/null
+
+        if [[ -s "$temp_notes" ]]; then
+            info "Using release notes from $source_changelog (section: $prerelease_version)"
+            notes_args=(--notes "$temp_notes")
+        else
+            warn "No section for $prerelease_version in $source_changelog — release.sh will use generic notes"
+            rm -f "$temp_notes"
+            temp_notes=""
+        fi
+    else
+        warn "Prerelease changelog not found: $source_changelog — release.sh will use generic notes"
+    fi
+
+    "${SCRIPT_DIR}/release.sh" "$stable_tag" "${notes_args[@]}" || fatal "Failed to create GitHub release"
+
+    [[ -n "$temp_notes" ]] && rm -f "$temp_notes"
 
     echo ""
     info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

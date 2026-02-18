@@ -10,7 +10,7 @@ Usage: $0 [options]
 
 Complete release workflow. MUST be run after the release PR is merged:
   1. Verify no release PR is still open
-  2. Calculate version from git history (git-cliff)
+  2. Determine version from the merged release PR (autorelease: pending label)
   3. Create git tag and push it
   4. Wait for CI pipeline (optional)
   5. Create GitHub release
@@ -86,20 +86,38 @@ main() {
         exit 0
     fi
 
-    # Calculate version using version.sh (git-cliff + git tags)
-    info "Calculating version from git history..."
-    local version
-    version=$("${SCRIPT_DIR}/version.sh" 2>/dev/null)
-    local version_exit=$?
+    # Find the version from the most recently merged release PR.
+    # publish.sh does NOT use version.sh: version.sh answers "what should the
+    # next version be?", while publish.sh needs "what did we just prepare?".
+    # The merged release PR (still labeled 'autorelease: pending' until we tag it)
+    # is the authoritative source for the version to publish.
+    info "Finding version from merged release PR..."
+    local pr_info
+    pr_info=$(gh pr list \
+        --state merged \
+        --label "autorelease: pending" \
+        --limit 1 \
+        --json number,title \
+        --jq '.[0] | select(. != null) | "\(.number)|\(.title)"' 2>/dev/null || echo "")
 
-    if [[ $version_exit -ne 0 ]]; then
-        fatal "Could not calculate version from version.sh"
-    fi
-
-    if [[ -z "$version" ]]; then
-        info "No releasable commits — nothing to publish"
+    if [[ -z "$pr_info" ]]; then
+        info "No merged release PR found (label: 'autorelease: pending') — nothing to publish"
         exit 0
     fi
+
+    local pr_number="${pr_info%%|*}"
+    local pr_title="${pr_info##*|}"
+
+    # Extract version from PR title: "chore(branch): release X.Y.Z[-type.N]"
+    local version
+    version=$(echo "$pr_title" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+\.[0-9]+)?")
+
+    if [[ -z "$version" ]]; then
+        fatal "Could not extract version from PR title: '$pr_title'"
+    fi
+
+    validate_tag "v${version}"
+    info "Version from merged PR #${pr_number}: $version"
 
     local tag="v${version}"
 

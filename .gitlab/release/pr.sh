@@ -75,8 +75,12 @@ main() {
     local original_branch="$base_branch"  # Remember where we started
     local push=true
 
+    local prerelease_flag=""
+
     while [[ $# -gt 0 ]]; do
         case $1 in
+            --prerelease) prerelease_flag="--prerelease"; shift ;;
+            --no-prerelease) prerelease_flag="--no-prerelease"; shift ;;
             --title) title=$2; shift 2 ;;
             --body) body_file=$2; shift 2 ;;
             --base) base_branch=$2; shift 2 ;;
@@ -87,13 +91,17 @@ main() {
         esac
     done
 
+    # Validate worktree is clean before any version calculation
+    if ! is_clean_worktree; then
+        fatal "Working tree is not clean. Commit or stash changes first."
+    fi
+
     # Auto-calculate version if not provided (single source of truth: git-cliff via version.sh)
     if [[ -z "$version" ]]; then
         info "No version specified, calculating from commits using version.sh..."
 
         # Call version.sh to calculate the version based on commits
-        # Use current config (prerelease setting)
-        version=$("${SCRIPT_DIR}/version.sh" 2>/dev/null)
+        version=$("${SCRIPT_DIR}/version.sh" ${prerelease_flag:+"$prerelease_flag"} 2>/dev/null)
         local version_exit=$?
 
         if [[ $version_exit -ne 0 ]] || [[ -z "$version" ]]; then
@@ -105,11 +113,6 @@ main() {
         # Strip v prefix if present
         version="${version#v}"
         warn "Version manually specified: $version (consider letting version.sh calculate it)"
-    fi
-
-    # Validate worktree is clean
-    if ! is_clean_worktree; then
-        fatal "Working tree is not clean. Commit or stash changes first."
     fi
 
     # Generate PR branch name (matching release-please convention)

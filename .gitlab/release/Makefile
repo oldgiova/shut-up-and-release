@@ -73,14 +73,10 @@ release-pr:
 	@cd $(REPO_ROOT) && if [ -n "$(PRERELEASE)" ]; then \
 		if [ "$(PRERELEASE)" = "true" ]; then \
 			echo "→ Forcing prerelease mode (override config)"; \
-			NEW_VERSION=$$($(SCRIPTS_DIR)/version.sh --prerelease) && \
-			echo "→ Calculated version: $$NEW_VERSION" && \
-			$(SCRIPTS_DIR)/pr.sh "$$NEW_VERSION"; \
+			$(SCRIPTS_DIR)/pr.sh --prerelease; \
 		else \
 			echo "→ Forcing stable mode (override config)"; \
-			NEW_VERSION=$$($(SCRIPTS_DIR)/version.sh --no-prerelease) && \
-			echo "→ Calculated version: $$NEW_VERSION" && \
-			$(SCRIPTS_DIR)/pr.sh "$$NEW_VERSION"; \
+			$(SCRIPTS_DIR)/pr.sh --no-prerelease; \
 		fi \
 	else \
 		echo "→ Using prerelease setting from config: $(PRERELEASE_CONFIG)"; \

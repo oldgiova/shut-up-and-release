@@ -29,7 +29,7 @@ Single Source of Truth:
 This script is idempotent: if the PR branch already exists, it will update it.
 The PR branch is always reset to the base branch tip before regenerating the
 changelog, so new commits on the base branch are always included. Updates use
---force-with-lease to push safely.
+--force since the branch is fully managed by this script.
 
 Examples:
   # Auto-calculate version and create PR (recommended)
@@ -130,8 +130,6 @@ main() {
     if remote_branch_exists "$pr_branch"; then
         warn "PR branch already exists remotely, will update it"
         branch_exists=true
-        # Fetch remote state now so --force-with-lease is effective later
-        git fetch origin "$pr_branch" 2>/dev/null || true
     fi
 
     # Always reset PR branch to the current tip of base branch.
@@ -196,12 +194,12 @@ main() {
     if [[ "$push" == "true" ]]; then
         info "Pushing branch to origin..."
 
-        # The PR branch is always regenerated from base, so updating it requires
-        # a force push. --force-with-lease is safe: it refuses if someone pushed
-        # to the remote after our fetch above (done at the start when branch_exists=true).
         if [[ "$branch_exists" == "true" ]]; then
-            retry_git push --force-with-lease origin "$pr_branch" || \
-                fatal "Force push failed. Run 'git fetch origin $pr_branch' and retry."
+            # Force push: the PR branch is fully managed by this script and is
+            # always regenerated from the base branch, so its history is always
+            # rewritten. No human commits should ever land directly on this branch,
+            # making --force safe and --force-with-lease unreliable (stale info).
+            retry_git push --force origin "$pr_branch" || fatal "Force push failed"
         else
             retry_git push origin "$pr_branch" || fatal "Push failed"
         fi

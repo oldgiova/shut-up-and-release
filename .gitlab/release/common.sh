@@ -149,17 +149,16 @@ get_latest_prerelease_tag() {
 }
 
 read_current_version() {
-    # Read version from manifest file (single source of truth)
-    if [[ -f "$MANIFEST_FILE" ]]; then
+    # Git tags are the single source of truth.
+    # Manifest is only a fallback for repos that have no tags yet.
+    local latest
+    latest=$(get_latest_tag)
+    if [[ -n "$latest" ]]; then
+        echo "${latest#v}"
+    elif [[ -f "$MANIFEST_FILE" ]]; then
         jq -r '.["."]' "$MANIFEST_FILE"
     else
-        # Fallback to git tags if manifest doesn't exist
-        local latest=$(get_latest_tag)
-        if [[ -z "$latest" ]]; then
-            echo "0.0.0"
-        else
-            echo "${latest#v}"
-        fi
+        echo "0.0.0"
     fi
 }
 

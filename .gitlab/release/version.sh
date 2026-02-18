@@ -21,10 +21,10 @@ Version Calculation:
     only tags matching vX.Y.* are considered for version calculation
 
 Options:
-  --dry-run       Show new version without writing
   --prerelease    Force prerelease mode (add -rc or -saas suffix)
   --no-prerelease Force stable mode (no suffix)
   --preview       Show commit analysis (git log)
+  --dry-run       Accepted for backwards compatibility (no-op: writes nothing)
 
 Environment:
   RELEASE_AS      Override version (format: X.Y.Z or X.Y.Z-type.N)
@@ -132,13 +132,12 @@ main() {
     init_release_scripts
     require_command git-cliff || require_command git
 
-    local dry_run=false
     local prerelease=""  # empty = use config, true/false = override
     local preview=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --dry-run) dry_run=true; shift ;;
+            --dry-run) shift ;;  # accepted for backwards compatibility, now a no-op
             --prerelease) prerelease=true; shift ;;
             --no-prerelease) prerelease=false; shift ;;
             --preview) preview=true; shift ;;
@@ -146,23 +145,6 @@ main() {
             *) error "Unknown option: $1"; usage; exit 1 ;;
         esac
     done
-
-    # State file for idempotency protection
-    local STATE_FILE=".release-calculation.lock"
-
-    # Check for existing calculation in progress
-    if [[ -f "$STATE_FILE" ]]; then
-        local prev_calculation=$(cat "$STATE_FILE" 2>/dev/null || echo "")
-        if [[ -n "$prev_calculation" ]]; then
-            warn "Previous calculation in progress or interrupted: $prev_calculation"
-            warn "Using cached result to ensure idempotency"
-            echo "$prev_calculation"
-            exit 0
-        else
-            # Empty state file, remove it
-            rm -f "$STATE_FILE"
-        fi
-    fi
 
     # Read current version
     local current=$(read_current_version)
@@ -346,30 +328,9 @@ main() {
         fatal "Calculated version already exists as tag: v${new_version}"
     fi
 
-    # Write to manifest
-    if [[ "$dry_run" == "false" ]]; then
-        # Write state file BEFORE manifest to protect against interruption
-        echo "$new_version" > "$STATE_FILE"
-        info "Created state lock: $STATE_FILE"
-
-        # Set up trap to clean up state file on exit/interrupt
-        trap 'rm -f "$STATE_FILE"' EXIT INT TERM
-
-        # Write version to manifest
-        write_version "$new_version"
-        info "Updated $MANIFEST_FILE"
-
-        # Success! Remove state file
-        rm -f "$STATE_FILE"
-        info "Released state lock: $STATE_FILE"
-
-        # Clear trap since we cleaned up successfully
-        trap - EXIT INT TERM
-    else
-        info "Dry-run mode: no changes written"
-    fi
-
-    # Output version for use in other scripts
+    # Output version for use in other scripts.
+    # version.sh is read-only: it never writes to disk.
+    # Git tags are the source of truth; the manifest is not updated here.
     echo "$new_version"
 }
 

@@ -58,6 +58,117 @@ generate_pr_title() {
     echo "chore(${base_branch}): release ${version}"
 }
 
+# For prerelease PRs, maintain CHANGELOG.md with a cumulative (unreleased) section
+# so that promote.sh can later open a PR replacing "(unreleased)" with the release date.
+#
+# Strategy:
+#   1. Find last stable tag to use as the range start for git-cliff
+#   2. Run git-cliff for stable_version over that range (ignoring rc/saas tags)
+#   3. Extract the ## {stable_version} section and replace the date with "(unreleased)"
+#   4. Splice that section into CHANGELOG.md (replacing an existing one if present)
+update_unreleased_stable_changelog() {
+    local stable_version=$1  # e.g. "0.0.6" (no v prefix)
+
+    info "Updating CHANGELOG.md with ## ${stable_version} (unreleased) section..."
+
+    # Find last stable tag for commit range
+    local last_stable_tag
+    last_stable_tag=$(git tag --list "v*" --sort=-version:refname 2>/dev/null | \
+                      grep -v -E -- '-(rc|saas)' | head -n 1 || echo "")
+
+    local range_arg
+    if [[ -n "$last_stable_tag" ]]; then
+        range_arg="${last_stable_tag}..HEAD"
+        info "  git-cliff range: ${last_stable_tag}..HEAD"
+    else
+        range_arg="--unreleased"
+        info "  No previous stable tag found, using --unreleased"
+    fi
+
+    # Generate full changelog output using git-cliff (local only, no API calls)
+    local temp_cliff_out
+    temp_cliff_out=$(mktemp -t "cliff-out-XXXXXX")
+
+    if ! git cliff ${range_arg} \
+            --tag "v${stable_version}" \
+            --ignore-tags '.*-(rc|saas).*' \
+            --use-branch-tags \
+            --no-exec > "$temp_cliff_out" 2>/dev/null; then
+        warn "git-cliff failed for CHANGELOG.md unreleased section, skipping"
+        rm -f "$temp_cliff_out"
+        return 0
+    fi
+
+    if [[ ! -s "$temp_cliff_out" ]]; then
+        warn "git-cliff produced empty output, skipping CHANGELOG.md unreleased section"
+        rm -f "$temp_cliff_out"
+        return 0
+    fi
+
+    # Extract just the ## {stable_version} section body from the full git-cliff output
+    local escaped_version
+    escaped_version=$(echo "$stable_version" | sed 's/\./\\./g')
+
+    local new_section_file
+    new_section_file=$(mktemp -t "section-XXXXXX")
+
+    # Write the header with (unreleased) marker
+    echo "## ${stable_version} (unreleased)" > "$new_section_file"
+
+    # Append the body lines (between the ## heading and the next ## heading)
+    awk "/^## (\[)?v?${escaped_version}(\])?( -|$)/ {found=1; next} \
+         found && /^## / {exit} \
+         found {print}" \
+        "$temp_cliff_out" >> "$new_section_file"
+
+    rm -f "$temp_cliff_out"
+
+    # Validate we got at least one content line beyond the header
+    if [[ $(wc -l < "$new_section_file") -le 1 ]]; then
+        warn "No content extracted for ## ${stable_version}, skipping CHANGELOG.md update"
+        rm -f "$new_section_file"
+        return 0
+    fi
+
+    # Splice into CHANGELOG.md:
+    #   - If a ## {stable_version} (unreleased) section already exists, replace it.
+    #   - Otherwise, insert the new section before the first ## heading.
+    local changelog="CHANGELOG.md"
+
+    if [[ ! -f "$changelog" ]]; then
+        { echo "# Changelog"; echo ""; cat "$new_section_file"; } > "$changelog"
+        rm -f "$new_section_file"
+        info "✓ Created CHANGELOG.md with ## ${stable_version} (unreleased) section"
+        return 0
+    fi
+
+    local temp_out
+    temp_out=$(mktemp -t "changelog-out-XXXXXX")
+
+    # Use awk to replace or insert the section.
+    # index() for the match avoids regex dot-as-wildcard issues with version numbers.
+    awk -v stable_ver="${stable_version}" -v sf="${new_section_file}" '
+        BEGIN {
+            inserted = 0; skip = 0
+            # Load new section content
+            while ((getline ln < sf) > 0) new_sec = new_sec ln "\n"
+            close(sf)
+        }
+        # Skip existing (unreleased) section for this exact version
+        index($0, "## " stable_ver " (unreleased)") == 1 { skip = 1; next }
+        skip && /^## / { skip = 0 }
+        skip { next }
+        # Insert before the first ## heading
+        /^## / && !inserted { printf "%s\n", new_sec; inserted = 1 }
+        { print }
+    ' "$changelog" > "$temp_out"
+
+    mv "$temp_out" "$changelog"
+    rm -f "$new_section_file"
+
+    info "✓ Updated CHANGELOG.md with ## ${stable_version} (unreleased) section"
+}
+
 main() {
     init_release_scripts
     require_command gh
@@ -167,6 +278,16 @@ main() {
             temp_body="$body_file"
         else
             warn "Provided body file not found: $body_file, using generated"
+        fi
+    fi
+
+    # For prerelease versions, maintain CHANGELOG.md with a cumulative (unreleased)
+    # section. promote.sh will later open a PR replacing "(unreleased)" with the date.
+    if is_prerelease "$version"; then
+        if command -v git-cliff &>/dev/null; then
+            update_unreleased_stable_changelog "$(base_version "$version")"
+        else
+            warn "git-cliff not found, skipping CHANGELOG.md unreleased section update"
         fi
     fi
 

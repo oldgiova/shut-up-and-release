@@ -15,6 +15,10 @@ PRERELEASE_TYPE := $(shell jq -r '."prerelease-type" // "rc"' $(REPO_ROOT)/relea
 export GITHUB_REPO_URL
 export GITHUB_TOKEN
 
+# Non-interactive mode: GitLab CI sets CI=true automatically.
+# Pass --auto-yes to all interactive scripts when running in CI.
+CI_FLAGS := $(if $(filter true,$(CI)),--auto-yes,)
+
 .PHONY: help
 help:
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -29,8 +33,8 @@ help:
 	@echo "Advanced:"
 	@echo "  make release-pr PRERELEASE=true              Force RC release PR"
 	@echo "  make release-pr PRERELEASE=false             Force stable release PR"
-	@echo "  make release-promote                         Promote latest RC/saas to stable"
-	@echo "  make release-promote RC_TAG=vX.Y.Z-rc.2      Promote specific tag to stable"
+	@echo "  make release-promote                         Create promote PR (latest RC/saas → stable)"
+	@echo "  make release-promote RC_TAG=vX.Y.Z-rc.2      Create promote PR for specific tag"
 	@echo ""
 	@echo "Helper Commands:"
 	@echo "  make release-version-show                    Show next version (dry-run)"
@@ -86,16 +90,16 @@ release-pr:
 .PHONY: release-publish
 release-publish:
 	@echo "Publishing release (tag + push + GitHub release)..."
-	@cd $(REPO_ROOT) && $(SCRIPTS_DIR)/publish.sh
+	@cd $(REPO_ROOT) && $(SCRIPTS_DIR)/publish.sh $(CI_FLAGS)
 
 .PHONY: release-promote
 release-promote:
 	@if [ -n "$(RC_TAG)" ]; then \
 		echo "Promoting $(RC_TAG) to stable..."; \
-		cd $(REPO_ROOT) && $(SCRIPTS_DIR)/promote.sh $(RC_TAG); \
+		cd $(REPO_ROOT) && $(SCRIPTS_DIR)/promote.sh $(RC_TAG) $(CI_FLAGS); \
 	else \
 		echo "Promoting latest prerelease to stable..."; \
-		cd $(REPO_ROOT) && $(SCRIPTS_DIR)/promote.sh; \
+		cd $(REPO_ROOT) && $(SCRIPTS_DIR)/promote.sh $(CI_FLAGS); \
 	fi
 
 .PHONY: release-github

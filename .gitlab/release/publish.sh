@@ -24,6 +24,7 @@ Options:
   --skip-tag      Skip tag creation (if already exists)
   --skip-ci-wait  Don't wait for CI pipeline
   --force-tag     Force recreate tag if exists
+  --auto-yes      Non-interactive: skip all prompts (implies --skip-ci-wait)
   -h, --help      Show this help
 
 Examples:
@@ -57,12 +58,14 @@ main() {
     local skip_tag=false
     local force_tag=""
     local skip_ci_wait=false
+    local auto_yes=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             --skip-tag) skip_tag=true; shift ;;
             --force-tag) force_tag="--force"; shift ;;
             --skip-ci-wait) skip_ci_wait=true; shift ;;
+            --auto-yes) auto_yes=true; skip_ci_wait=true; shift ;;
             -h|--help) usage; exit 0 ;;
             *) error "Unknown option: $1"; usage; exit 1 ;;
         esac
@@ -139,12 +142,16 @@ main() {
         if tag_exists "$tag"; then
             if [[ -z "$force_tag" ]]; then
                 warn "Tag already exists: $tag"
-                read -p "Recreate tag? (y/N): " -n 1 -r
-                echo
-                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    info "Using existing tag"
+                if [[ "$auto_yes" == "true" ]]; then
+                    info "Auto-yes: using existing tag"
                 else
-                    force_tag="--force"
+                    read -p "Recreate tag? (y/N): " -n 1 -r
+                    echo
+                    if [[ $REPLY =~ ^[Yy]$ ]]; then
+                        force_tag="--force"
+                    else
+                        info "Using existing tag"
+                    fi
                 fi
             fi
         fi
@@ -183,13 +190,17 @@ main() {
     # Check if release already exists
     if gh release view "$tag" &>/dev/null; then
         warn "GitHub release already exists for $tag"
-        read -p "Update it? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            info "Skipping GitHub release"
-            echo ""
-            info "✓ Release published: $tag"
-            return 0
+        if [[ "$auto_yes" == "true" ]]; then
+            info "Auto-yes: updating existing release"
+        else
+            read -p "Update it? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                info "Skipping GitHub release"
+                echo ""
+                info "✓ Release published: $tag"
+                return 0
+            fi
         fi
     fi
 
